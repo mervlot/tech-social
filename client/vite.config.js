@@ -8,6 +8,17 @@ export default defineConfig({
             '@': path.resolve(__dirname, './src'),
         },
     },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    react: ['react', 'react-dom', 'react-router-dom'],
+                    data: ['axios', '@tanstack/react-query', 'zod'],
+                    icons: ['lucide-react'],
+                },
+            },
+        },
+    },
     server: {
         port: 5173,
         // Listen on all network interfaces so other devices (e.g. a phone on the

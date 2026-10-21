@@ -31,20 +31,35 @@ export function VirtualizedPostList({ posts, subscribeRealtime, overscan = 5 }: 
 
   const updateRange = useCallback(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || posts.length === 0) return;
+
     const rect = host.getBoundingClientRect();
     const viewportTop = Math.max(0, -rect.top);
     const viewportBottom = viewportTop + window.innerHeight;
-    const first = Math.max(0, offsets.offsets.findIndex((value, index) => {
-      const height = heightsRef.current.get(posts[index]?.id) ?? ESTIMATED_HEIGHT;
-      return value + height >= viewportTop;
-    }) - overscan);
-    let last = first;
+
+    // Binary search keeps range updates cheap even for feeds with thousands of posts.
+    let low = 0;
+    let high = posts.length - 1;
+    let firstVisible = posts.length - 1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const height = heightsRef.current.get(posts[middle].id) ?? ESTIMATED_HEIGHT;
+      if (offsets.offsets[middle] + height >= viewportTop) {
+        firstVisible = middle;
+        high = middle - 1;
+      } else {
+        low = middle + 1;
+      }
+    }
+
+    const first = Math.max(0, firstVisible - overscan);
+    let last = firstVisible;
     while (last < posts.length && offsets.offsets[last] < viewportBottom) last += 1;
-    setRange((current) => current.start === first && current.end === Math.min(posts.length, last + overscan) ? current : {
-      start: first,
-      end: Math.min(posts.length, last + overscan),
-    });
+    const nextEnd = Math.min(posts.length, last + overscan);
+
+    setRange((current) =>
+      current.start === first && current.end === nextEnd ? current : { start: first, end: nextEnd },
+    );
   }, [offsets.offsets, overscan, posts]);
 
   useLayoutEffect(() => {

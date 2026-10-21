@@ -32,6 +32,10 @@ export function Feed({ queryKey, fetchPage, initialPageParam, emptyText = 'Nothi
     queryFn: ({ pageParam }) => fetchPage(pageParam as string | number | undefined),
     initialPageParam,
     getNextPageParam: (last) => last.next ?? undefined,
+    // Keep memory bounded on low-RAM devices while retaining a useful back-scroll window.
+    maxPages: 20,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
   });
 
   const sentinelRef = useIntersection(
