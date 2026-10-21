@@ -18,7 +18,7 @@ sqlite.exec(`
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
-CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, password_hash TEXT, google_id TEXT, email_verified INTEGER NOT NULL DEFAULT 0, verified INTEGER NOT NULL DEFAULT 0, bio TEXT NOT NULL DEFAULT '', link TEXT, location TEXT, game_status TEXT, avatar_url TEXT, banner_url TEXT, cover_url TEXT, pinned_post_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, password_hash TEXT, google_id TEXT, email_verified INTEGER NOT NULL DEFAULT 0, verified INTEGER NOT NULL DEFAULT 0, bio TEXT NOT NULL DEFAULT '', link TEXT, location TEXT, game_status TEXT, avatar_url TEXT, banner_url TEXT, cover_url TEXT, pinned_post_id TEXT, last_seen_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, author_id TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', media TEXT NOT NULL DEFAULT '[]', media_json TEXT NOT NULL DEFAULT '[]', parent_id TEXT, reply_to_id TEXT, repost_of_id TEXT, quoted_post_id TEXT, community_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, view_count INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS follows (follower_id TEXT NOT NULL, following_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (follower_id, following_id));
 CREATE TABLE IF NOT EXISTS likes (user_id TEXT NOT NULL, post_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id));
@@ -27,10 +27,33 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (id TEXT PRIMARY KEY, user_id TEXT NOT
 CREATE TABLE IF NOT EXISTS password_reset_tokens (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, used_at TEXT);
 CREATE TABLE IF NOT EXISTS blocks (blocker_id TEXT NOT NULL, blocked_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (blocker_id, blocked_id));
 CREATE TABLE IF NOT EXISTS mutes (muter_id TEXT NOT NULL, muted_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (muter_id, muted_id));
+CREATE TABLE IF NOT EXISTS bookmarks (user_id TEXT NOT NULL, post_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id));
+CREATE TABLE IF NOT EXISTS stories (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', media_url TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS story_views (story_id TEXT NOT NULL, user_id TEXT NOT NULL, viewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (story_id, user_id));
+CREATE TABLE IF NOT EXISTS hashtags (id TEXT PRIMARY KEY, tag TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS post_hashtags (post_id TEXT NOT NULL, hashtag_id TEXT NOT NULL, PRIMARY KEY (post_id, hashtag_id));
+CREATE TABLE IF NOT EXISTS mentions (post_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (post_id, user_id));
+CREATE TABLE IF NOT EXISTS polls (id TEXT PRIMARY KEY, post_id TEXT NOT NULL, question TEXT NOT NULL DEFAULT '', options TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS poll_votes (poll_id TEXT NOT NULL, user_id TEXT NOT NULL, option_index INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (poll_id, user_id));
+CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, actor_id TEXT, type TEXT NOT NULL DEFAULT '', post_id TEXT, read_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS posts_author_idx ON posts(author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS likes_post_idx ON likes(post_id);
 `);
+
+// Existing Termux databases must be upgraded in place. CREATE TABLE IF NOT EXISTS
+// does not add columns, so keep this migration additive and restart-safe.
+const migrations: Record<string, Record<string, string>> = {
+  users: { email_verified: 'INTEGER NOT NULL DEFAULT 0', verified: 'INTEGER NOT NULL DEFAULT 0', last_seen_at: 'TEXT', updated_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
+  posts: { media_json: "TEXT NOT NULL DEFAULT '[]'", view_count: 'INTEGER NOT NULL DEFAULT 0', updated_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
+  refresh_tokens: { session_id: 'TEXT', revoked_at: 'TEXT', user_agent: 'TEXT', ip: 'TEXT', last_used_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
+};
+for (const [table, columns] of Object.entries(migrations)) {
+  const existing = new Set((sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((item) => item.name));
+  for (const [name, definition] of Object.entries(columns)) {
+    if (!existing.has(name)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+}
 
 const tableNames: Record<string, string> = {
   user: 'users', post: 'posts', follow: 'follows', like: 'likes', comment: 'comments',
