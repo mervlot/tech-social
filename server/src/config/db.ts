@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS likes_post_idx ON likes(post_id);
 // does not add columns, so keep this migration additive and restart-safe.
 const migrations: Record<string, Record<string, string>> = {
   users: { email_verified: 'INTEGER NOT NULL DEFAULT 0', verified: 'INTEGER NOT NULL DEFAULT 0', last_seen_at: 'TEXT', updated_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
-  posts: { media_json: "TEXT NOT NULL DEFAULT '[]'", parent_id: 'TEXT', reply_to_id: 'TEXT', repost_of_id: 'TEXT', quoted_post_id: 'TEXT', community_id: 'TEXT', view_count: 'INTEGER NOT NULL DEFAULT 0', updated_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
+  posts: { media: "TEXT NOT NULL DEFAULT '[]'", media_json: "TEXT NOT NULL DEFAULT '[]'", poll: 'TEXT', parent_id: 'TEXT', reply_to_id: 'TEXT', repost_of_id: 'TEXT', quoted_post_id: 'TEXT', community_id: 'TEXT', view_count: 'INTEGER NOT NULL DEFAULT 0', edited_at: 'TEXT', updated_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
   notifications: { recipient_id: 'TEXT', read: 'INTEGER NOT NULL DEFAULT 0' },
   refresh_tokens: { session_id: 'TEXT', revoked_at: 'TEXT', user_agent: 'TEXT', ip: 'TEXT', last_used_at: "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" },
 };
@@ -73,9 +73,16 @@ const tableNames: Record<string, string> = {
 };
 const column = (key: string) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 const value = (input: any) => input instanceof Date ? input.toISOString() : typeof input === 'boolean' ? (input ? 1 : 0) : input;
+const jsonColumns = new Set(['media', 'mediaJson', 'poll', 'options']);
 const fromRow = (row: Row | undefined): Row | null => {
   if (!row) return null;
-  return Object.fromEntries(Object.entries(row).map(([key, val]) => [key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()), val]));
+  return Object.fromEntries(Object.entries(row).map(([key, raw]) => {
+    const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+    if (jsonColumns.has(camelKey) && typeof raw === 'string') {
+      try { return [camelKey, JSON.parse(raw)]; } catch { return [camelKey, raw]; }
+    }
+    return [camelKey, raw];
+  }));
 };
 
 function matches(row: Row, where: Where = {}) {
@@ -120,7 +127,19 @@ function model(name: string): any {
       }
       return [...groups.values()];
     },
-    create: async ({ data }: any) => { const row = { id: data.id ?? crypto.randomUUID(), ...data }; const keys = Object.keys(row).filter((key) => row[key] === null || typeof row[key] !== 'object' || row[key] instanceof Date); const columns = keys.map(column); sqlite.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...keys.map((key) => value(row[key]))); return fromRow(sqlite.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(row.id) as Row); },
+    create: async ({ data }: any) => {
+      const row: Row = { id: data.id ?? crypto.randomUUID(), ...data };
+      // Relation-shaped Prisma data is not a SQLite column. Preserve supported
+      // post payloads as JSON instead of generating invalid column names.
+      if (table === 'posts') {
+        if (row.media && typeof row.media === 'object') row.media = JSON.stringify(row.media.create?.map((item: any) => item) ?? row.media);
+        if (row.poll && typeof row.poll === 'object') row.poll = JSON.stringify(row.poll.create ?? row.poll);
+      }
+      const keys = Object.keys(row).filter((key) => row[key] === null || typeof row[key] !== 'object' || row[key] instanceof Date);
+      const columns = keys.map(column);
+      sqlite.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...keys.map((key) => value(row[key])));
+      return fromRow(sqlite.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(row.id) as Row);
+    },
     update: async ({ where, data }: any) => { const current = find({ where })[0]; if (!current) throw new Error(`${name} not found`); const entries = Object.entries(data).filter(([, v]) => typeof v !== 'object' || v instanceof Date); sqlite.prepare(`UPDATE ${table} SET ${entries.map(([key]) => `${column(key)} = ?`).join(',')} WHERE id = ?`).run(...entries.map(([, v]) => value(v)), current.id); return find({ where: { id: current.id } })[0]; },
     updateMany: async ({ where, data }: any) => { const rows = find({ where }); for (const row of rows) await model(name).update({ where: { id: row.id }, data }); return { count: rows.length }; },
     deleteMany: async ({ where }: any = {}) => { const rows = find({ where }); for (const row of rows) sqlite.prepare(`DELETE FROM ${table} WHERE id = ?`).run(row.id); return { count: rows.length }; },
