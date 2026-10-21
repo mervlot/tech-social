@@ -13,5 +13,6 @@ export default defineConfig({
         // Listen on all network interfaces so other devices (e.g. a phone on the
         // same Wi-Fi) can reach the dev server, not just localhost.
         host: true,
+        allowedHosts: ['.vercel.run', 'localhost'],
     },
 });

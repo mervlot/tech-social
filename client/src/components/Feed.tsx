@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { MessageSquareDashed, AlertTriangle } from 'lucide-react';
 import { useIntersection } from '../hooks/useIntersection';
-import { PostCard } from './PostCard';
+import { VirtualizedPostList } from './VirtualizedPostList';
 import { useT } from '../lib/i18n';
 import { PostSkeletonList } from './PostSkeleton';
 import { EmptyState } from './EmptyState';
@@ -69,9 +69,7 @@ export function Feed({ queryKey, fetchPage, initialPageParam, emptyText = 'Nothi
 
   return (
     <div>
-      {unique.map((post, index) => (
-        <PostCard key={post.id} post={post} index={index} subscribeRealtime={subscribeRealtime} />
-      ))}
+      <VirtualizedPostList posts={unique} subscribeRealtime={subscribeRealtime} />
       <div ref={sentinelRef} />
       {query.isFetchingNextPage && <Spinner />}
       {!query.hasNextPage && <p className="py-8 text-center text-sm text-gray-500">{t('caughtUp')}</p>}
