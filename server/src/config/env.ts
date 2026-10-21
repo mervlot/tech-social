@@ -47,6 +47,9 @@ export const env = {
   // the Electron shell (which still runs the server with NODE_ENV=production
   // so the built client is served and uploads are persisted in the database).
   isDesktop: process.env.DESKTOP === '1',
+  // 0.0.0.0 is required when the app is opened from another device on the
+  // same network, which is common when running the stack in Termux.
+  host: process.env.HOST ?? '0.0.0.0',
   port: Number(process.env.PORT ?? 4000),
   apiUrl,
   clientUrls,

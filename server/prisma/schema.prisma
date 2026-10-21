@@ -6,9 +6,9 @@ generator client {
 }
 
 datasource db {
-  // For an instant, zero-install local run this is set to "sqlite".
-  // To use PostgreSQL (the production target) switch this back to
-  // "postgresql" and point DATABASE_URL at your Postgres instance.
+  // SQLite keeps the backend zero-install and Termux-friendly. The app reads
+  // and writes the local database file directly through Prisma's SQLite
+  // driver; no MongoDB or external database service is required.
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }

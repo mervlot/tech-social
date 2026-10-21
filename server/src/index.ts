@@ -11,7 +11,7 @@ async function main() {
   // Attach Socket.io for realtime notifications and direct messages.
   initSockets(server);
 
-  server.listen(env.port, () => {
+  server.listen(env.port, env.host, () => {
     // eslint-disable-next-line no-console
     console.log(`API listening on ${env.apiUrl} (port ${env.port})`);
   });

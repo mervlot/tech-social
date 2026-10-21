@@ -6,7 +6,13 @@
   "scripts": {
     "install:all": "npm --prefix server install && npm --prefix client install",
     "dev:server": "npm --prefix server run dev",
-    "dev:client": "npm --prefix client run dev",
+    "dev:client": "npm --prefix client run dev -- --host 0.0.0.0",
+    "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:client\"",
+    "build": "npm --prefix client run build && npm --prefix server run build",
+    "start": "npm --prefix server start",
     "db:migrate": "npm --prefix server run prisma:migrate"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }
