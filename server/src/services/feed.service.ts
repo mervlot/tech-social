@@ -63,8 +63,14 @@ export async function getExploreFeed(viewerId: string | undefined, page = 0, lim
   const scored = candidates
     .map((p: any) => {
       const ageHours = (now - new Date(p.createdAt).getTime()) / 3_600_000;
+      // The SQLite compatibility adapter may not materialize Prisma's `_count`
+      // include. Treat missing relation counts as zero so Explore still loads.
+      const counts = p._count ?? {};
       const engagement =
-        p._count.likes * 1 + p._count.reposts * 2 + p._count.replies * 1.5 + p._count.quotes * 1.5;
+        (counts.likes ?? 0) * 1 +
+        (counts.reposts ?? 0) * 2 +
+        (counts.replies ?? 0) * 1.5 +
+        (counts.quotes ?? 0) * 1.5;
       // Time decay similar to Hacker News' gravity formula.
       const score = (engagement + 1) / Math.pow(ageHours + 2, 1.5);
       return { post: p, score };
