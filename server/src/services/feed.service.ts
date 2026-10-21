@@ -63,8 +63,14 @@ export async function getExploreFeed(viewerId: string | undefined, page = 0, lim
   const scored = candidates
     .map((p: any) => {
       const ageHours = (now - new Date(p.createdAt).getTime()) / 3_600_000;
+      // The SQLite adapter may not materialize Prisma-style relation counts.
+      // Keep ranking safe and derive zero counts until those relations are loaded.
+      const counts = p._count ?? {};
       const engagement =
-        p._count.likes * 1 + p._count.reposts * 2 + p._count.replies * 1.5 + p._count.quotes * 1.5;
+        Number(counts.likes ?? 0) * 1 +
+        Number(counts.reposts ?? 0) * 2 +
+        Number(counts.replies ?? 0) * 1.5 +
+        Number(counts.quotes ?? 0) * 1.5;
       // Time decay similar to Hacker News' gravity formula.
       const score = (engagement + 1) / Math.pow(ageHours + 2, 1.5);
       return { post: p, score };
