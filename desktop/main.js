@@ -224,7 +224,7 @@ function loadSecrets() {
 function ensureDatabase(serverCwd) {
   const dbPath = path.join(app.getPath('userData'), 'murmur.db');
   if (!fs.existsSync(dbPath)) {
-    fs.copyFileSync(path.join(serverCwd, 'prisma', 'template.db'), dbPath);
+    fs.copyFileSync(path.join(serverCwd, 'data', 'social-network.db'), dbPath);
   }
   return `file:${dbPath.replace(/\\/g, '/')}`;
 }

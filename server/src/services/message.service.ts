@@ -1,4 +1,4 @@
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { authorSelect } from './serializers';
 import { emitToUser } from '../sockets/io';
@@ -9,7 +9,7 @@ function orderPair(a: string, b: string): [string, string] {
 }
 
 async function ensureNotBlocked(a: string, b: string) {
-  const blocked = await prisma.block.findFirst({
+  const blocked = await db.block.findFirst({
     where: {
       OR: [
         { blockerId: a, blockedId: b },
@@ -91,8 +91,8 @@ function serializeMessage(m: any) {
 // Re-fetch a message with reactions and push it to both participants.
 async function emitMessageUpdate(conversationId: string, messageId: string) {
   const [fresh, conv] = await Promise.all([
-    prisma.message.findUnique({ where: { id: messageId }, include: messageInclude }),
-    prisma.conversation.findUnique({ where: { id: conversationId } }),
+    db.message.findUnique({ where: { id: messageId }, include: messageInclude }),
+    db.conversation.findUnique({ where: { id: conversationId } }),
   ]);
   if (!fresh || !conv) return null;
   const message = serializeMessage(fresh);
@@ -102,13 +102,13 @@ async function emitMessageUpdate(conversationId: string, messageId: string) {
 }
 
 export async function getOrCreateConversation(userId: string, otherUsername: string) {
-  const other = await prisma.user.findUnique({ where: { username: otherUsername }, select: { id: true } });
+  const other = await db.user.findUnique({ where: { username: otherUsername }, select: { id: true } });
   if (!other) throw ApiError.notFound('User not found');
   if (other.id === userId) throw ApiError.badRequest('You cannot message yourself');
   await ensureNotBlocked(userId, other.id);
 
   const [userAId, userBId] = orderPair(userId, other.id);
-  const conversation = await prisma.conversation.upsert({
+  const conversation = await db.conversation.upsert({
     where: { userAId_userBId: { userAId, userBId } },
     create: { userAId, userBId },
     update: {},
@@ -143,7 +143,7 @@ function shapeConversation(c: any, viewerId: string) {
 }
 
 export async function listConversations(userId: string) {
-  const conversations = await prisma.conversation.findMany({
+  const conversations = await db.conversation.findMany({
     where: { OR: [{ userAId: userId }, { userBId: userId }] },
     orderBy: { updatedAt: 'desc' },
     include: {
@@ -156,7 +156,7 @@ export async function listConversations(userId: string) {
   // Compute unread counts (messages sent by the other user, not yet read).
   const withUnread = await Promise.all(
     conversations.map(async (c) => {
-      const unread = await prisma.message.count({
+      const unread = await db.message.count({
         where: { conversationId: c.id, senderId: { not: userId }, readAt: null },
       });
       return shapeConversation({ ...c, _unread: unread }, userId);
@@ -168,7 +168,7 @@ export async function listConversations(userId: string) {
 // Fetches a single conversation's metadata for a participant. Lets the client
 // open a chat by id even when its conversation list cache is empty or stale.
 export async function getConversation(conversationId: string, userId: string) {
-  const c = await prisma.conversation.findUnique({
+  const c = await db.conversation.findUnique({
     where: { id: conversationId },
     include: {
       userA: { select: authorSelect },
@@ -179,14 +179,14 @@ export async function getConversation(conversationId: string, userId: string) {
   if (!c || (c.userAId !== userId && c.userBId !== userId)) {
     throw ApiError.notFound('Conversation not found');
   }
-  const unread = await prisma.message.count({
+  const unread = await db.message.count({
     where: { conversationId: c.id, senderId: { not: userId }, readAt: null },
   });
   return shapeConversation({ ...c, _unread: unread }, userId);
 }
 
 async function assertParticipant(conversationId: string, userId: string) {
-  const c = await prisma.conversation.findUnique({ where: { id: conversationId } });
+  const c = await db.conversation.findUnique({ where: { id: conversationId } });
   if (!c) throw ApiError.notFound('Conversation not found');
   if (c.userAId !== userId && c.userBId !== userId) throw ApiError.forbidden('Not a participant');
   return c;
@@ -194,7 +194,7 @@ async function assertParticipant(conversationId: string, userId: string) {
 
 export async function getMessages(conversationId: string, userId: string, cursor?: string, limit = 30) {
   await assertParticipant(conversationId, userId);
-  const items = await prisma.message.findMany({
+  const items = await db.message.findMany({
     where: { conversationId },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -231,15 +231,15 @@ export async function sendMessage(
 
   // A reply must target a message inside the same conversation.
   if (replyToId) {
-    const target = await prisma.message.findFirst({
+    const target = await db.message.findFirst({
       where: { id: replyToId, conversationId },
       select: { id: true },
     });
     if (!target) throw ApiError.badRequest('The message you are replying to was not found');
   }
 
-  const [message] = await prisma.$transaction([
-    prisma.message.create({
+  const [message] = await db.$transaction([
+    db.message.create({
       data: {
         conversationId,
         senderId,
@@ -252,7 +252,7 @@ export async function sendMessage(
       },
       include: messageInclude,
     }),
-    prisma.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } }),
+    db.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } }),
   ]);
 
   const serialized = serializeMessage(message);
@@ -270,20 +270,20 @@ export async function reactToMessage(
   emoji: string,
 ) {
   await assertParticipant(conversationId, userId);
-  const message = await prisma.message.findFirst({
+  const message = await db.message.findFirst({
     where: { id: messageId, conversationId },
     select: { id: true, deletedAt: true },
   });
   if (!message) throw ApiError.notFound('Message not found');
   if (message.deletedAt) throw ApiError.badRequest('Cannot react to a deleted message');
 
-  const existing = await prisma.messageReaction.findUnique({
+  const existing = await db.messageReaction.findUnique({
     where: { messageId_userId_emoji: { messageId, userId, emoji } },
   });
   if (existing) {
-    await prisma.messageReaction.delete({ where: { id: existing.id } });
+    await db.messageReaction.delete({ where: { id: existing.id } });
   } else {
-    await prisma.messageReaction.create({ data: { messageId, userId, emoji } });
+    await db.messageReaction.create({ data: { messageId, userId, emoji } });
   }
   return emitMessageUpdate(conversationId, messageId);
 }
@@ -296,7 +296,7 @@ export async function editMessage(
   content: string,
 ) {
   await assertParticipant(conversationId, userId);
-  const message = await prisma.message.findFirst({
+  const message = await db.message.findFirst({
     where: { id: messageId, conversationId },
     select: { id: true, senderId: true, deletedAt: true, audioUrl: true, videoNoteUrl: true },
   });
@@ -309,7 +309,7 @@ export async function editMessage(
   const text = content.trim();
   if (!text) throw ApiError.badRequest('Message cannot be empty');
 
-  await prisma.message.update({
+  await db.message.update({
     where: { id: messageId },
     data: { content: text, editedAt: new Date() },
   });
@@ -319,19 +319,19 @@ export async function editMessage(
 // Soft-delete your own message ("message deleted"); notifies both participants.
 export async function deleteMessage(conversationId: string, messageId: string, userId: string) {
   await assertParticipant(conversationId, userId);
-  const message = await prisma.message.findFirst({
+  const message = await db.message.findFirst({
     where: { id: messageId, conversationId },
     select: { id: true, senderId: true },
   });
   if (!message) throw ApiError.notFound('Message not found');
   if (message.senderId !== userId) throw ApiError.forbidden('You can only delete your own messages');
 
-  await prisma.$transaction([
-    prisma.message.update({
+  await db.$transaction([
+    db.message.update({
       where: { id: messageId },
       data: { deletedAt: new Date(), content: null, imageUrl: null, audioUrl: null, videoNoteUrl: null },
     }),
-    prisma.messageReaction.deleteMany({ where: { messageId } }),
+    db.messageReaction.deleteMany({ where: { messageId } }),
   ]);
   return emitMessageUpdate(conversationId, messageId);
 }
@@ -339,9 +339,9 @@ export async function deleteMessage(conversationId: string, messageId: string, u
 // Marks all messages from the *other* participant as read. Returns the other
 // user's id so the caller (socket handler) can notify them.
 export async function markConversationRead(conversationId: string, userId: string): Promise<string | null> {
-  const conv = await prisma.conversation.findUnique({ where: { id: conversationId } });
+  const conv = await db.conversation.findUnique({ where: { id: conversationId } });
   if (!conv || (conv.userAId !== userId && conv.userBId !== userId)) return null;
-  await prisma.message.updateMany({
+  await db.message.updateMany({
     where: { conversationId, senderId: { not: userId }, readAt: null },
     data: { readAt: new Date() },
   });

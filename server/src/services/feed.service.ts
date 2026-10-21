@@ -1,5 +1,4 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { postInclude, serializePost } from './serializers';
 import { getHiddenUserIds } from './user.service';
@@ -16,18 +15,18 @@ function paginate<T extends { id: string }>(items: T[], limit: number) {
 // follows (plus their own), newest first. Replies are excluded (seen in threads).
 export async function getHomeFeed(viewerId: string, cursor?: string, limit = PAGE) {
   const [following, hidden] = await Promise.all([
-    prisma.follow.findMany({ where: { followerId: viewerId }, select: { followingId: true } }),
+    db.follow.findMany({ where: { followerId: viewerId }, select: { followingId: true } }),
     getHiddenUserIds(viewerId),
   ]);
   const authorIds = [viewerId, ...following.map((f) => f.followingId)].filter((id) => !hidden.includes(id));
 
-  const where: Prisma.PostWhereInput = {
+  const where: any = {
     authorId: { in: authorIds },
     parentId: null, // exclude replies from the home timeline
     communityId: null, // community posts live in their own feed
   };
 
-  const items = await prisma.post.findMany({
+  const items = await db.post.findMany({
     where,
     include: postInclude(viewerId),
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -47,7 +46,7 @@ export async function getExploreFeed(viewerId: string | undefined, page = 0, lim
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   // Pull a candidate window of recent original posts, then rank in memory.
-  const candidates = await prisma.post.findMany({
+  const candidates = await db.post.findMany({
     where: {
       createdAt: { gte: since },
       parentId: null,
@@ -89,14 +88,14 @@ export async function getUserPosts(
   cursor?: string,
   limit = PAGE,
 ) {
-  const user = await prisma.user.findUnique({
+  const user = await db.user.findUnique({
     where: { username },
     select: { id: true, pinnedPostId: true },
   });
   if (!user) throw ApiError.notFound('User not found');
 
   if (tab === 'likes') {
-    const rows = await prisma.like.findMany({
+    const rows = await db.like.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
@@ -111,12 +110,12 @@ export async function getUserPosts(
     };
   }
 
-  let where: Prisma.PostWhereInput = { authorId: user.id };
+  let where: any = { authorId: user.id };
   if (tab === 'posts') where = { authorId: user.id, parentId: null };
   if (tab === 'replies') where = { authorId: user.id, parentId: { not: null } };
   if (tab === 'media') where = { authorId: user.id, media: { some: {} } };
 
-  const items = await prisma.post.findMany({
+  const items = await db.post.findMany({
     where,
     include: postInclude(viewerId),
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -128,7 +127,7 @@ export async function getUserPosts(
 
   // Surface the pinned post at the top of the first page of the "posts" tab.
   if (tab === 'posts' && !cursor && user.pinnedPostId) {
-    const pinned = await prisma.post.findUnique({
+    const pinned = await db.post.findUnique({
       where: { id: user.pinnedPostId },
       include: postInclude(viewerId),
     });

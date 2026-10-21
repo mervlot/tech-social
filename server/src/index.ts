@@ -2,7 +2,7 @@ import http from 'http';
 import { createApp } from './app';
 import { env } from './config/env';
 import { initSockets } from './sockets';
-import { prisma } from './config/prisma';
+import { db } from './config/db';
 
 async function main() {
   const app = createApp();
@@ -20,7 +20,7 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log('\nShutting down...');
     server.close();
-    await prisma.$disconnect();
+    await db.$disconnect();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

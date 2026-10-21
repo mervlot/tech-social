@@ -1,4 +1,4 @@
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { authorSelect, postInclude, serializePost } from './serializers';
 import { emitToCommunity } from '../sockets/io';
@@ -50,10 +50,10 @@ export async function createCommunity(
   const slug = slugify(input.slug || name);
   if (slug.length < 3) throw ApiError.badRequest('Slug must be at least 3 characters');
 
-  const existing = await prisma.community.findUnique({ where: { slug }, select: { id: true } });
+  const existing = await db.community.findUnique({ where: { slug }, select: { id: true } });
   if (existing) throw ApiError.conflict('That community handle is already taken');
 
-  const community = await prisma.community.create({
+  const community = await db.community.create({
     data: {
       slug,
       name,
@@ -68,7 +68,7 @@ export async function createCommunity(
 }
 
 export async function listCommunities(viewerId?: string, cursor?: string, limit = PAGE) {
-  const items = await prisma.community.findMany({
+  const items = await db.community.findMany({
     orderBy: [{ members: { _count: 'desc' } }, { id: 'desc' }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -84,7 +84,7 @@ export async function listCommunities(viewerId?: string, cursor?: string, limit 
 
 // Communities the viewer belongs to (for the sidebar / quick switcher).
 export async function listMyCommunities(viewerId: string) {
-  const rows = await prisma.communityMember.findMany({
+  const rows = await db.communityMember.findMany({
     where: { userId: viewerId },
     orderBy: { joinedAt: 'desc' },
     include: { community: { include: listInclude(viewerId) } },
@@ -93,7 +93,7 @@ export async function listMyCommunities(viewerId: string) {
 }
 
 async function findBySlugOrThrow(slug: string, viewerId?: string) {
-  const community = await prisma.community.findUnique({
+  const community = await db.community.findUnique({
     where: { slug },
     include: listInclude(viewerId),
   });
@@ -107,7 +107,7 @@ export async function getCommunity(slug: string, viewerId?: string) {
 }
 
 async function assertMember(communityId: string, userId: string) {
-  const membership = await prisma.communityMember.findUnique({
+  const membership = await db.communityMember.findUnique({
     where: { communityId_userId: { communityId, userId } },
   });
   if (!membership) throw ApiError.forbidden('Join this community first');
@@ -115,9 +115,9 @@ async function assertMember(communityId: string, userId: string) {
 }
 
 export async function joinCommunity(userId: string, slug: string) {
-  const community = await prisma.community.findUnique({ where: { slug }, select: { id: true } });
+  const community = await db.community.findUnique({ where: { slug }, select: { id: true } });
   if (!community) throw ApiError.notFound('Community not found');
-  await prisma.communityMember.upsert({
+  await db.communityMember.upsert({
     where: { communityId_userId: { communityId: community.id, userId } },
     create: { communityId: community.id, userId, role: 'MEMBER' },
     update: {},
@@ -126,18 +126,18 @@ export async function joinCommunity(userId: string, slug: string) {
 }
 
 export async function leaveCommunity(userId: string, slug: string) {
-  const community = await prisma.community.findUnique({
+  const community = await db.community.findUnique({
     where: { slug },
     select: { id: true, ownerId: true },
   });
   if (!community) throw ApiError.notFound('Community not found');
   if (community.ownerId === userId) throw ApiError.badRequest('The owner cannot leave their community');
-  await prisma.communityMember.deleteMany({ where: { communityId: community.id, userId } });
+  await db.communityMember.deleteMany({ where: { communityId: community.id, userId } });
   return getCommunity(slug, userId);
 }
 
 export async function getCommunityFeed(slug: string, viewerId?: string, cursor?: string, limit = PAGE) {
-  const community = await prisma.community.findUnique({
+  const community = await db.community.findUnique({
     where: { slug },
     select: { id: true, isPrivate: true },
   });
@@ -147,7 +147,7 @@ export async function getCommunityFeed(slug: string, viewerId?: string, cursor?:
     await assertMember(community.id, viewerId);
   }
 
-  const items = await prisma.post.findMany({
+  const items = await db.post.findMany({
     where: { communityId: community.id, parentId: null, repostOfId: null },
     include: postInclude(viewerId),
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -160,9 +160,9 @@ export async function getCommunityFeed(slug: string, viewerId?: string, cursor?:
 }
 
 export async function listMembers(slug: string, cursor?: string, limit = 30) {
-  const community = await prisma.community.findUnique({ where: { slug }, select: { id: true } });
+  const community = await db.community.findUnique({ where: { slug }, select: { id: true } });
   if (!community) throw ApiError.notFound('Community not found');
-  const rows = await prisma.communityMember.findMany({
+  const rows = await db.communityMember.findMany({
     where: { communityId: community.id },
     orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
     take: limit + 1,
@@ -180,11 +180,11 @@ export async function listMembers(slug: string, cursor?: string, limit = 30) {
 // ─────────────────────── Group chat ───────────────────────
 
 export async function getCommunityMessages(slug: string, userId: string, cursor?: string, limit = 30) {
-  const community = await prisma.community.findUnique({ where: { slug }, select: { id: true } });
+  const community = await db.community.findUnique({ where: { slug }, select: { id: true } });
   if (!community) throw ApiError.notFound('Community not found');
   await assertMember(community.id, userId);
 
-  const items = await prisma.communityMessage.findMany({
+  const items = await db.communityMessage.findMany({
     where: { communityId: community.id },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -198,14 +198,14 @@ export async function getCommunityMessages(slug: string, userId: string, cursor?
 }
 
 export async function sendCommunityMessage(slug: string, userId: string, content: string) {
-  const community = await prisma.community.findUnique({ where: { slug }, select: { id: true } });
+  const community = await db.community.findUnique({ where: { slug }, select: { id: true } });
   if (!community) throw ApiError.notFound('Community not found');
   await assertMember(community.id, userId);
 
   const text = content.trim();
   if (!text) throw ApiError.badRequest('Message cannot be empty');
 
-  const message = await prisma.communityMessage.create({
+  const message = await db.communityMessage.create({
     data: { communityId: community.id, senderId: userId, content: text },
     include: { sender: { select: authorSelect } },
   });

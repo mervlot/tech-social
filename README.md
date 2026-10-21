@@ -2,7 +2,7 @@
 
 > *Where the world thinks out loud.*
 
-A working social network built with a RESTful Node.js/Express + Prisma backend and
+A working social network built with a RESTful Node.js/Express + SQLite backend and
 a React + TypeScript + Tailwind frontend, with Socket.io for realtime notifications
 and direct messages. All data is persisted in a real database — there are no mocks.
 
@@ -95,7 +95,7 @@ The project runs out-of-the-box on **SQLite** (zero install) and can switch to
 | ---------- | ------------------------------------------------------------- |
 | Frontend   | React, TypeScript, Vite, Tailwind CSS, TanStack Query, Zustand |
 | Backend    | Node.js, Express, TypeScript                                  |
-| Database   | PostgreSQL via Prisma ORM                                     |
+| Database   | PostgreSQL via SQLite ORM                                     |
 | Auth       | JWT + refresh tokens, bcryptjs                                |
 | Realtime   | Socket.io                                                     |
 | Media      | Local disk storage via multer (abstracted behind a URL helper)|
@@ -151,8 +151,8 @@ In Google Cloud Console, add this authorized redirect URI:
 Create the database schema and start the server:
 
 ```bash
-npm run prisma:migrate        # creates dev.db and applies migrations
-npm run prisma:generate       # (usually run automatically by migrate)
+npm run sqlite:migrate        # creates dev.db and applies migrations
+npm run sqlite:generate       # (usually run automatically by migrate)
 
 # start the API + WebSocket server on http://localhost:4000
 npm run dev
@@ -179,11 +179,11 @@ Open **http://localhost:5173** and create an account to get started.
 ```
 social-network/
 ├── server/
-│   ├── prisma/
-│   │   ├── schema.prisma         # data model
+│   ├── sqlite/
+│   │   ├── sqlite-schema-removed         # data model
 │   │   └── migrations/           # generated SQL migrations
 │   └── src/
-│       ├── config/               # env + Prisma client
+│       ├── config/               # env + SQLite client
 │       ├── middleware/           # auth, validation, rate-limit, uploads, errors
 │       ├── validators/           # zod schemas
 │       ├── services/             # business logic (auth, post, feed, user, …)
@@ -282,7 +282,7 @@ Authenticate by passing the access token in the handshake `auth.token`.
 - **JWT access tokens** are short-lived and kept in memory (not localStorage);
   **refresh tokens** are random, stored only as SHA-256 hashes, rotated on use,
   and delivered via an httpOnly cookie scoped to `/api/auth`.
-- **SQL injection**: all DB access goes through Prisma's parameterised queries.
+- **SQL injection**: all DB access goes through SQLite's parameterised queries.
 - **XSS**: post content is rendered as React text nodes / elements — never via
   `dangerouslySetInnerHTML`.
 - **Validation**: every endpoint validates input with zod (mirrored on the client).
@@ -298,8 +298,8 @@ Authenticate by passing the access token in the handshake `auth.token`.
 npm run dev              # dev server with reload
 npm run build            # compile TypeScript to dist/
 npm start                # run compiled server
-npm run prisma:studio    # browse the DB in Prisma Studio
-npm run prisma:migrate   # create & apply a migration
+npm run sqlite:studio    # browse the DB in SQLite Studio
+npm run sqlite:migrate   # create & apply a migration
 
 # client
 npm run dev              # Vite dev server
@@ -314,9 +314,9 @@ npm run preview          # preview the production build
 The app ships configured for **SQLite** so it runs with zero setup. To use
 **PostgreSQL** (the production target):
 
-1. In `server/prisma/schema.prisma`, set `provider = "postgresql"`.
+1. In `server/sqlite/sqlite-schema-removed`, set `provider = "postgresql"`.
 2. In `server/.env`, point `DATABASE_URL` at your Postgres instance.
-3. Run `npm run prisma:migrate` again.
+3. Run `npm run sqlite:migrate` again.
 
 The data model is written to work on both engines (enums are stored as strings,
 and no engine-specific column types are used).

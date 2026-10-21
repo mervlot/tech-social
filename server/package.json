@@ -10,15 +10,14 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio",
+    "db:init": "node scripts/init-db.mjs",
+    "db:check": "node scripts/check-db.mjs",
     "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
-    "@prisma/client": "^5.18.0",
+    "@types/better-sqlite3": "^9.6.0",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^13.0.3",
     "cloudinary": "^2.10.0",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -41,7 +40,6 @@
     "@types/multer": "^1.4.11",
     "@types/node": "^20.14.10",
     "@types/nodemailer": "^8.0.1",
-    "prisma": "^5.18.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.3"
   }

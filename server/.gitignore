@@ -5,5 +5,5 @@ uploads/*
 !uploads/.gitkeep
 *.log
 # Local SQLite database (contains real data — never commit)
-prisma/*.db
-prisma/*.db-journal
+sqlite/*.db
+sqlite/*.db-journal

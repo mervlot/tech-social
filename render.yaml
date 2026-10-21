@@ -17,13 +17,13 @@ services:
       npm run build &&
       cd ../server &&
       npm ci --include=dev &&
-      sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma &&
-      npx prisma generate &&
+      sed -i 's/provider = "sqlite"/provider = "postgresql"/' sqlite/sqlite-schema-removed &&
+      npx db:init &&
       npm run build
 
     startCommand: >-
-      sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma &&
-      npx prisma db push --skip-generate --accept-data-loss &&
+      sed -i 's/provider = "sqlite"/provider = "postgresql"/' sqlite/sqlite-schema-removed &&
+      npx db:init &&
       node dist/index.js
 
     envVars:

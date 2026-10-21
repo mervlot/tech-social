@@ -1,5 +1,4 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { authorSelect, postInclude, serializePost } from './serializers';
 import { getHiddenUserIds } from './user.service';
 
@@ -7,7 +6,7 @@ import { getHiddenUserIds } from './user.service';
 export async function searchUsers(query: string, viewerId?: string, limit = 20) {
   const q = query.trim();
   if (!q) return [];
-  const users = await prisma.user.findMany({
+  const users = await db.user.findMany({
     where: {
       OR: [
         { username: { contains: q } },
@@ -20,7 +19,7 @@ export async function searchUsers(query: string, viewerId?: string, limit = 20) 
   });
 
   if (!viewerId) return users.map((u) => ({ ...u, isFollowing: false }));
-  const following = await prisma.follow.findMany({
+  const following = await db.follow.findMany({
     where: { followerId: viewerId, followingId: { in: users.map((u) => u.id) } },
     select: { followingId: true },
   });
@@ -34,13 +33,13 @@ export async function searchPosts(query: string, viewerId?: string, cursor?: str
   if (!q) return { items: [], nextCursor: null };
   const hidden = viewerId ? await getHiddenUserIds(viewerId) : [];
 
-  const where: Prisma.PostWhereInput = {
+  const where: any = {
     content: { contains: q },
     repostOfId: null,
     ...(hidden.length ? { authorId: { notIn: hidden } } : {}),
   };
 
-  const items = await prisma.post.findMany({
+  const items = await db.post.findMany({
     where,
     include: postInclude(viewerId),
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -57,7 +56,7 @@ export async function getHashtagPosts(tag: string, viewerId?: string, cursor?: s
   const normalised = tag.toLowerCase().replace(/^#/, '');
   const hidden = viewerId ? await getHiddenUserIds(viewerId) : [];
 
-  const items = await prisma.post.findMany({
+  const items = await db.post.findMany({
     where: {
       hashtags: { some: { hashtag: { tag: normalised } } },
       ...(hidden.length ? { authorId: { notIn: hidden } } : {}),
@@ -75,7 +74,7 @@ export async function getHashtagPosts(tag: string, viewerId?: string, cursor?: s
 // Trending hashtags: most-used tags in posts from the last 7 days.
 export async function getTrends(limit = 10) {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const grouped = await prisma.postHashtag.groupBy({
+  const grouped = await db.postHashtag.groupBy({
     by: ['hashtagId'],
     where: { post: { createdAt: { gte: since } } },
     _count: { hashtagId: true },
@@ -84,7 +83,7 @@ export async function getTrends(limit = 10) {
   });
   if (!grouped.length) return [];
 
-  const hashtags = await prisma.hashtag.findMany({
+  const hashtags = await db.hashtag.findMany({
     where: { id: { in: grouped.map((g) => g.hashtagId) } },
   });
   const byId = new Map(hashtags.map((h) => [h.id, h.tag]));

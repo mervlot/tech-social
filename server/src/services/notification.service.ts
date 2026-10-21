@@ -1,5 +1,4 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { NotificationType } from '../types/enums';
 import { emitToUser } from '../sockets/io';
 import { authorSelect } from './serializers';
@@ -13,7 +12,7 @@ const notificationInclude = {
       author: { select: authorSelect },
     },
   },
-} satisfies Prisma.NotificationInclude;
+} satisfies Record<string, unknown>;
 
 interface CreateArgs {
   type: NotificationType;
@@ -27,13 +26,13 @@ interface CreateArgs {
 export async function createNotification({ type, recipientId, actorId, postId }: CreateArgs) {
   if (recipientId === actorId) return null;
 
-  const notification = await prisma.notification.create({
+  const notification = await db.notification.create({
     data: { type, recipientId, actorId, postId },
     include: notificationInclude,
   });
 
   emitToUser(recipientId, 'notification:new', notification);
-  const unread = await prisma.notification.count({ where: { recipientId, read: false } });
+  const unread = await db.notification.count({ where: { recipientId, read: false } });
   emitToUser(recipientId, 'notification:count', { unread });
 
   return notification;
@@ -42,15 +41,15 @@ export async function createNotification({ type, recipientId, actorId, postId }:
 // Removes a notification that no longer applies (e.g. after an unlike/unfollow).
 export async function removeNotification({ type, recipientId, actorId, postId }: CreateArgs) {
   if (recipientId === actorId) return;
-  await prisma.notification.deleteMany({
+  await db.notification.deleteMany({
     where: { type, recipientId, actorId, postId: postId ?? null },
   });
-  const unread = await prisma.notification.count({ where: { recipientId, read: false } });
+  const unread = await db.notification.count({ where: { recipientId, read: false } });
   emitToUser(recipientId, 'notification:count', { unread });
 }
 
 export async function listNotifications(userId: string, cursor?: string, limit = 20) {
-  const items = await prisma.notification.findMany({
+  const items = await db.notification.findMany({
     where: { recipientId: userId },
     include: notificationInclude,
     orderBy: { createdAt: 'desc' },
@@ -64,11 +63,11 @@ export async function listNotifications(userId: string, cursor?: string, limit =
 }
 
 export async function unreadCount(userId: string) {
-  return prisma.notification.count({ where: { recipientId: userId, read: false } });
+  return db.notification.count({ where: { recipientId: userId, read: false } });
 }
 
 export async function markAllRead(userId: string) {
-  await prisma.notification.updateMany({
+  await db.notification.updateMany({
     where: { recipientId: userId, read: false },
     data: { read: true },
   });

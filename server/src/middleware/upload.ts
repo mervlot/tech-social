@@ -5,7 +5,7 @@ import { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
 import { env } from '../config/env';
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 
 export const uploadRoot = path.resolve(process.cwd(), env.upload.dir);
@@ -96,7 +96,7 @@ export async function storeUploadedFile(file: Express.Multer.File): Promise<stri
 
   if (env.isProd) {
     if (!file.buffer) throw new Error('Uploaded file is missing its memory buffer');
-    const stored = await prisma.storedUpload.create({
+    const stored = await db.storedUpload.create({
       data: {
         data: file.buffer,
         mimeType: file.mimetype,
@@ -117,7 +117,7 @@ export async function serveStoredUpload(
   res: Response,
   next: NextFunction,
 ) {
-  const stored = await prisma.storedUpload.findUnique({
+  const stored = await db.storedUpload.findUnique({
     where: { id: req.params.id },
     select: { data: true, mimeType: true, size: true },
   });

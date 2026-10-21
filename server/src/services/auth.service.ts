@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { env } from '../config/env';
@@ -55,7 +55,7 @@ export interface SessionMeta {
 export async function issueTokens(userId: string, meta: SessionMeta = {}, sessionId?: string) {
   const accessToken = signAccessToken(userId);
   const refreshToken = generateRefreshToken();
-  await prisma.refreshToken.create({
+  await db.refreshToken.create({
     data: {
       tokenHash: hashToken(refreshToken),
       userId,
@@ -77,7 +77,7 @@ interface RegisterArgs {
 
 export async function register({ email, username, displayName, password }: RegisterArgs, meta?: SessionMeta) {
   const normalisedEmail = email.toLowerCase();
-  const existing = await prisma.user.findFirst({
+  const existing = await db.user.findFirst({
     where: { OR: [{ email: normalisedEmail }, { username }] },
     select: { email: true, username: true },
   });
@@ -87,7 +87,7 @@ export async function register({ email, username, displayName, password }: Regis
   }
 
   const passwordHash = await hashPassword(password);
-  const user = await prisma.user.create({
+  const user = await db.user.create({
     data: { email: normalisedEmail, username, displayName, passwordHash, emailVerified: false },
     select: meSelect,
   });
@@ -101,7 +101,7 @@ export async function login(identifier: string, password: string, meta?: Session
   // Brute-force guard (per identifier + IP) on top of the IP rate limiter.
   assertLoginAllowed(value, ip);
 
-  const user = await prisma.user.findFirst({
+  const user = await db.user.findFirst({
     where: { OR: [{ email: value.toLowerCase() }, { username: value }] },
   });
   if (!user || !user.passwordHash) {
@@ -193,7 +193,7 @@ async function uniqueUsername(email: string) {
   for (let i = 0; i < 50; i += 1) {
     const suffix = i === 0 ? '' : String(i + 1);
     const candidate = `${base.slice(0, 20 - suffix.length)}${suffix}`;
-    const exists = await prisma.user.findUnique({ where: { username: candidate }, select: { id: true } });
+    const exists = await db.user.findUnique({ where: { username: candidate }, select: { id: true } });
     if (!exists) return candidate;
   }
   return `user_${generateRefreshToken().slice(0, 8)}`;
@@ -203,13 +203,13 @@ export async function loginWithGoogle(code: string, meta?: SessionMeta) {
   const profile = await fetchGoogleProfile(code);
   const email = profile.email.toLowerCase();
   const displayName = (profile.name || email.split('@')[0] || 'Google user').slice(0, 50);
-  const existing = await prisma.user.findFirst({
+  const existing = await db.user.findFirst({
     where: { OR: [{ googleId: profile.sub }, { email }] },
     select: meSelect,
   });
 
   if (existing) {
-    const user = await prisma.user.update({
+    const user = await db.user.update({
       where: { id: existing.id },
       data: {
         googleId: existing.googleId ?? profile.sub,
@@ -223,7 +223,7 @@ export async function loginWithGoogle(code: string, meta?: SessionMeta) {
   }
 
   const username = await uniqueUsername(email);
-  const user = await prisma.user.create({
+  const user = await db.user.create({
     data: {
       email,
       username,
@@ -241,7 +241,7 @@ export async function loginWithGoogle(code: string, meta?: SessionMeta) {
 // Revokes every still-live token in a session family. Used both for explicit
 // "log out this device" and automatically when token reuse is detected.
 async function revokeFamily(sessionId: string) {
-  await prisma.refreshToken.updateMany({
+  await db.refreshToken.updateMany({
     where: { sessionId, revokedAt: null },
     data: { revokedAt: new Date() },
   });
@@ -257,7 +257,7 @@ async function revokeFamily(sessionId: string) {
 export async function rotateRefresh(refreshToken: string, meta?: SessionMeta) {
   if (!refreshToken) throw ApiError.unauthorized('Missing refresh token');
   const tokenHash = hashToken(refreshToken);
-  const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+  const stored = await db.refreshToken.findUnique({ where: { tokenHash } });
 
   if (!stored) throw ApiError.unauthorized('Invalid or expired session');
 
@@ -270,7 +270,7 @@ export async function rotateRefresh(refreshToken: string, meta?: SessionMeta) {
   const sessionId = stored.sessionId ?? stored.id;
 
   if (stored.expiresAt < new Date()) {
-    await prisma.refreshToken.update({
+    await db.refreshToken.update({
       where: { tokenHash },
       data: { sessionId, revokedAt: new Date() },
     });
@@ -278,7 +278,7 @@ export async function rotateRefresh(refreshToken: string, meta?: SessionMeta) {
   }
 
   // Rotate: soft-revoke the presented token, issue a new one in the same family.
-  await prisma.refreshToken.update({
+  await db.refreshToken.update({
     where: { tokenHash },
     data: { sessionId, revokedAt: new Date() },
   });
@@ -294,7 +294,7 @@ export async function rotateRefresh(refreshToken: string, meta?: SessionMeta) {
 // Resolves the session family id for the refresh token currently in use.
 async function currentSessionId(currentRefreshToken?: string): Promise<string | null> {
   if (!currentRefreshToken) return null;
-  const row = await prisma.refreshToken.findUnique({
+  const row = await db.refreshToken.findUnique({
     where: { tokenHash: hashToken(currentRefreshToken) },
     select: { id: true, sessionId: true },
   });
@@ -305,7 +305,7 @@ async function currentSessionId(currentRefreshToken?: string): Promise<string | 
 // current device. Revoked/expired tokens are excluded.
 export async function listSessions(userId: string, currentRefreshToken?: string) {
   const currentSid = await currentSessionId(currentRefreshToken);
-  const rows = await prisma.refreshToken.findMany({
+  const rows = await db.refreshToken.findMany({
     where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
     orderBy: { lastUsedAt: 'desc' },
     select: { id: true, sessionId: true, userAgent: true, ip: true, createdAt: true, lastUsedAt: true },
@@ -339,7 +339,7 @@ export async function listSessions(userId: string, currentRefreshToken?: string)
 
 // Revokes an entire session family by its id ("log out this device").
 export async function revokeSession(userId: string, sessionId: string) {
-  const result = await prisma.refreshToken.updateMany({
+  const result = await db.refreshToken.updateMany({
     where: {
       userId,
       revokedAt: null,
@@ -353,7 +353,7 @@ export async function revokeSession(userId: string, sessionId: string) {
 // Revokes every session except the current family ("log out everywhere else").
 export async function revokeOtherSessions(userId: string, currentRefreshToken?: string) {
   const currentSid = await currentSessionId(currentRefreshToken);
-  await prisma.refreshToken.updateMany({
+  await db.refreshToken.updateMany({
     where: {
       userId,
       revokedAt: null,
@@ -373,14 +373,14 @@ export async function revokeOtherSessions(userId: string, currentRefreshToken?: 
 export async function logout(refreshToken?: string) {
   if (!refreshToken) return;
   // Soft-revoke so a later replay of this token still trips reuse detection.
-  await prisma.refreshToken.updateMany({
+  await db.refreshToken.updateMany({
     where: { tokenHash: hashToken(refreshToken), revokedAt: null },
     data: { revokedAt: new Date() },
   });
 }
 
 export async function getMe(userId: string) {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: meSelect });
+  const user = await db.user.findUnique({ where: { id: userId }, select: meSelect });
   if (!user) throw ApiError.notFound('User not found');
   return toAuthUser(user);
 }
@@ -393,7 +393,7 @@ function resetCodeHash(userId: string, code: string) {
 // accounts so this endpoint cannot be used to discover registered users.
 export async function requestPasswordReset(identifier: string) {
   const value = identifier.trim();
-  const user = await prisma.user.findFirst({
+  const user = await db.user.findFirst({
     where: { OR: [{ email: value.toLowerCase() }, { username: value }] },
     select: { id: true, email: true, passwordHash: true },
   });
@@ -402,9 +402,9 @@ export async function requestPasswordReset(identifier: string) {
   if (!user?.passwordHash) return { code: null };
 
   const code = String(crypto.randomInt(100000, 1000000));
-  await prisma.$transaction([
-    prisma.passwordResetToken.deleteMany({ where: { userId: user.id } }),
-    prisma.passwordResetToken.create({
+  await db.$transaction([
+    db.passwordResetToken.deleteMany({ where: { userId: user.id } }),
+    db.passwordResetToken.create({
       data: {
         tokenHash: resetCodeHash(user.id, code),
         userId: user.id,
@@ -420,7 +420,7 @@ export async function requestPasswordReset(identifier: string) {
     try {
       await sendPasswordResetCode(user.email, code);
     } catch (error) {
-      await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+      await db.passwordResetToken.deleteMany({ where: { userId: user.id } });
       throw error;
     }
   }
@@ -430,29 +430,29 @@ export async function requestPasswordReset(identifier: string) {
 
 export async function resetPassword(identifier: string, code: string, newPassword: string) {
   const value = identifier.trim();
-  const user = await prisma.user.findFirst({
+  const user = await db.user.findFirst({
     where: { OR: [{ email: value.toLowerCase() }, { username: value }] },
     select: { id: true },
   });
   if (!user) throw ApiError.badRequest('Invalid or expired reset code');
 
   const tokenHash = resetCodeHash(user.id, code);
-  const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+  const record = await db.passwordResetToken.findUnique({ where: { tokenHash } });
   if (!record || record.usedAt || record.expiresAt < new Date()) {
     throw ApiError.badRequest('Invalid or expired reset code');
   }
 
   const passwordHash = await hashPassword(newPassword);
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
-    prisma.passwordResetToken.update({ where: { tokenHash }, data: { usedAt: new Date() } }),
+  await db.$transaction([
+    db.user.update({ where: { id: record.userId }, data: { passwordHash } }),
+    db.passwordResetToken.update({ where: { tokenHash }, data: { usedAt: new Date() } }),
     // Invalidate all existing sessions on password change.
-    prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
+    db.refreshToken.deleteMany({ where: { userId: record.userId } }),
   ]);
 }
 
 export async function changePassword(userId: string, currentPassword: string | undefined, newPassword: string) {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) throw ApiError.notFound('User not found');
   if (user.passwordHash) {
     if (!currentPassword) throw ApiError.badRequest('Current password is required');
@@ -460,5 +460,5 @@ export async function changePassword(userId: string, currentPassword: string | u
     if (!ok) throw ApiError.badRequest('Current password is incorrect');
   }
   const passwordHash = await hashPassword(newPassword);
-  await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+  await db.user.update({ where: { id: userId }, data: { passwordHash } });
 }

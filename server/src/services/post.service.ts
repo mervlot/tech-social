@@ -1,4 +1,4 @@
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { MediaType } from '../types/enums';
 import { ApiError } from '../utils/apiError';
 import { extractHashtags, extractMentions } from '../utils/textParser';
@@ -57,12 +57,12 @@ async function syncHashtagsAndMentions(
   const mentions = extractMentions(content);
 
   for (const tag of tags) {
-    const hashtag = await prisma.hashtag.upsert({
+    const hashtag = await db.hashtag.upsert({
       where: { tag },
       create: { tag },
       update: {},
     });
-    await prisma.postHashtag.upsert({
+    await db.postHashtag.upsert({
       where: { postId_hashtagId: { postId, hashtagId: hashtag.id } },
       create: { postId, hashtagId: hashtag.id },
       update: {},
@@ -70,13 +70,13 @@ async function syncHashtagsAndMentions(
   }
 
   if (mentions.length) {
-    const users = await prisma.user.findMany({
+    const users = await db.user.findMany({
       where: { username: { in: mentions } },
       select: { id: true },
     });
     for (const u of users) {
       if (u.id === authorId) continue;
-      await prisma.mention.upsert({
+      await db.mention.upsert({
         where: { postId_userId: { postId, userId: u.id } },
         create: { postId, userId: u.id },
         update: {},
@@ -110,11 +110,11 @@ export async function createPost({
 
   // Validate referenced posts exist.
   if (parentId) {
-    const parent = await prisma.post.findUnique({ where: { id: parentId } });
+    const parent = await db.post.findUnique({ where: { id: parentId } });
     if (!parent) throw ApiError.notFound('Parent post not found');
   }
   if (quotedPostId) {
-    const quoted = await prisma.post.findUnique({ where: { id: quotedPostId } });
+    const quoted = await db.post.findUnique({ where: { id: quotedPostId } });
     if (!quoted) throw ApiError.notFound('Quoted post not found');
   }
   // Posting into a community requires membership (top-level posts only).
@@ -123,7 +123,7 @@ export async function createPost({
     await assertCanPostTo(communityId, authorId);
   }
 
-  const post = await prisma.post.create({
+  const post = await db.post.create({
     data: {
       authorId,
       content: trimmed,
@@ -149,20 +149,20 @@ export async function createPost({
 
   // Notify on reply / quote.
   if (parentId) {
-    const parent = await prisma.post.findUnique({ where: { id: parentId }, select: { authorId: true } });
+    const parent = await db.post.findUnique({ where: { id: parentId }, select: { authorId: true } });
     if (parent) {
       await createNotification({ type: 'REPLY', recipientId: parent.authorId, actorId: authorId, postId: post.id });
     }
   }
   if (quotedPostId) {
-    const quoted = await prisma.post.findUnique({ where: { id: quotedPostId }, select: { authorId: true } });
+    const quoted = await db.post.findUnique({ where: { id: quotedPostId }, select: { authorId: true } });
     if (quoted) {
       await createNotification({ type: 'QUOTE', recipientId: quoted.authorId, actorId: authorId, postId: post.id });
     }
   }
 
   // Re-fetch with viewer flags now that links exist.
-  const full = await prisma.post.findUnique({ where: { id: post.id }, include: postInclude(authorId) });
+  const full = await db.post.findUnique({ where: { id: post.id }, include: postInclude(authorId) });
   return serializePost(full!);
 }
 
@@ -177,7 +177,7 @@ const pollWithCounts = (viewerId?: string) => ({
 // Cast (or change) a vote in a post's poll. Votes can be switched until the
 // poll closes. Everyone watching the post gets a live 'poll:update'.
 export async function votePoll(postId: string, userId: string, optionId: string) {
-  const poll = await prisma.poll.findUnique({
+  const poll = await db.poll.findUnique({
     where: { postId },
     include: { options: { select: { id: true } } },
   });
@@ -185,13 +185,13 @@ export async function votePoll(postId: string, userId: string, optionId: string)
   if (poll.endsAt <= new Date()) throw ApiError.badRequest('This poll has ended');
   if (!poll.options.some((o) => o.id === optionId)) throw ApiError.badRequest('Unknown poll option');
 
-  await prisma.pollVote.upsert({
+  await db.pollVote.upsert({
     where: { pollId_userId: { pollId: poll.id, userId } },
     create: { pollId: poll.id, optionId, userId },
     update: { optionId },
   });
 
-  const fresh = await prisma.poll.findUnique({
+  const fresh = await db.poll.findUnique({
     where: { id: poll.id },
     include: pollWithCounts(userId),
   });
@@ -202,26 +202,26 @@ export async function votePoll(postId: string, userId: string, optionId: string)
 }
 
 export async function getPostById(id: string, viewerId?: string) {
-  const post = await prisma.post.findUnique({ where: { id }, include: postInclude(viewerId) });
+  const post = await db.post.findUnique({ where: { id }, include: postInclude(viewerId) });
   if (!post) throw ApiError.notFound('Post not found');
   return serializePost(post);
 }
 
 export async function getThread(id: string, viewerId?: string) {
   // Count a view (best-effort; ignored for the post's own author).
-  const existing = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+  const existing = await db.post.findUnique({ where: { id }, select: { authorId: true } });
   if (existing && existing.authorId !== viewerId) {
-    await prisma.post.update({ where: { id }, data: { viewCount: { increment: 1 } } }).catch(() => {});
+    await db.post.update({ where: { id }, data: { viewCount: { increment: 1 } } }).catch(() => {});
   }
 
-  const post = await prisma.post.findUnique({ where: { id }, include: postInclude(viewerId) });
+  const post = await db.post.findUnique({ where: { id }, include: postInclude(viewerId) });
   if (!post) throw ApiError.notFound('Post not found');
 
   // Ancestor chain (the parents above this post), oldest first.
   const ancestors: any[] = [];
   let cursorId = post.parentId;
   while (cursorId) {
-    const parent: any = await prisma.post.findUnique({
+    const parent: any = await db.post.findUnique({
       where: { id: cursorId },
       include: postInclude(viewerId),
     });
@@ -234,7 +234,7 @@ export async function getThread(id: string, viewerId?: string) {
 }
 
 export async function getReplies(postId: string, viewerId?: string, cursor?: string, limit = 20) {
-  const items = await prisma.post.findMany({
+  const items = await db.post.findMany({
     where: { parentId: postId },
     include: postInclude(viewerId),
     orderBy: { createdAt: 'asc' },
@@ -247,15 +247,15 @@ export async function getReplies(postId: string, viewerId?: string, cursor?: str
 }
 
 export async function deletePost(id: string, userId: string) {
-  const post = await prisma.post.findUnique({ where: { id }, select: { authorId: true } });
+  const post = await db.post.findUnique({ where: { id }, select: { authorId: true } });
   if (!post) throw ApiError.notFound('Post not found');
   if (post.authorId !== userId) throw ApiError.forbidden('You can only delete your own posts');
-  await prisma.post.delete({ where: { id } });
+  await db.post.delete({ where: { id } });
 }
 
 // Edits the text of an existing post (text only; media stays unchanged).
 export async function updatePost(id: string, userId: string, content: string) {
-  const post = await prisma.post.findUnique({
+  const post = await db.post.findUnique({
     where: { id },
     select: { authorId: true, repostOfId: true, media: { select: { id: true } } },
   });
@@ -267,25 +267,25 @@ export async function updatePost(id: string, userId: string, content: string) {
   if (!trimmed && post.media.length === 0) throw ApiError.badRequest('Post cannot be empty');
 
   // Rebuild hashtag / mention links from the new text (without re-notifying).
-  await prisma.postHashtag.deleteMany({ where: { postId: id } });
-  await prisma.mention.deleteMany({ where: { postId: id } });
-  await prisma.post.update({
+  await db.postHashtag.deleteMany({ where: { postId: id } });
+  await db.mention.deleteMany({ where: { postId: id } });
+  await db.post.update({
     where: { id },
     data: { content: trimmed || null, editedAt: new Date() },
   });
   if (trimmed) await syncHashtagsAndMentions(id, trimmed, userId, false);
 
-  const full = await prisma.post.findUnique({ where: { id }, include: postInclude(userId) });
+  const full = await db.post.findUnique({ where: { id }, include: postInclude(userId) });
   return serializePost(full!);
 }
 
 // ───────────────────────── Likes ─────────────────────────
 
 export async function likePost(postId: string, userId: string) {
-  const post = await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } });
+  const post = await db.post.findUnique({ where: { id: postId }, select: { authorId: true } });
   if (!post) throw ApiError.notFound('Post not found');
 
-  await prisma.like.upsert({
+  await db.like.upsert({
     where: { userId_postId: { userId, postId } },
     create: { userId, postId },
     update: {},
@@ -295,9 +295,9 @@ export async function likePost(postId: string, userId: string) {
 }
 
 export async function unlikePost(postId: string, userId: string) {
-  const post = await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } });
+  const post = await db.post.findUnique({ where: { id: postId }, select: { authorId: true } });
   if (!post) throw ApiError.notFound('Post not found');
-  await prisma.like.deleteMany({ where: { userId, postId } });
+  await db.like.deleteMany({ where: { userId, postId } });
   await removeNotification({ type: 'LIKE', recipientId: post.authorId, actorId: userId, postId });
   return getCounts(postId);
 }
@@ -305,21 +305,21 @@ export async function unlikePost(postId: string, userId: string) {
 // ──────────────────────── Reposts ────────────────────────
 
 export async function repost(postId: string, userId: string) {
-  const original = await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } });
+  const original = await db.post.findUnique({ where: { id: postId }, select: { authorId: true } });
   if (!original) throw ApiError.notFound('Post not found');
 
-  const existing = await prisma.post.findFirst({ where: { repostOfId: postId, authorId: userId } });
+  const existing = await db.post.findFirst({ where: { repostOfId: postId, authorId: userId } });
   if (!existing) {
-    await prisma.post.create({ data: { authorId: userId, repostOfId: postId } });
+    await db.post.create({ data: { authorId: userId, repostOfId: postId } });
     await createNotification({ type: 'REPOST', recipientId: original.authorId, actorId: userId, postId });
   }
   return getCounts(postId);
 }
 
 export async function unrepost(postId: string, userId: string) {
-  const original = await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } });
+  const original = await db.post.findUnique({ where: { id: postId }, select: { authorId: true } });
   if (!original) throw ApiError.notFound('Post not found');
-  await prisma.post.deleteMany({ where: { repostOfId: postId, authorId: userId } });
+  await db.post.deleteMany({ where: { repostOfId: postId, authorId: userId } });
   await removeNotification({ type: 'REPOST', recipientId: original.authorId, actorId: userId, postId });
   return getCounts(postId);
 }
@@ -327,9 +327,9 @@ export async function unrepost(postId: string, userId: string) {
 // ─────────────────────── Bookmarks ───────────────────────
 
 export async function bookmarkPost(postId: string, userId: string) {
-  const post = await prisma.post.findUnique({ where: { id: postId }, select: { id: true } });
+  const post = await db.post.findUnique({ where: { id: postId }, select: { id: true } });
   if (!post) throw ApiError.notFound('Post not found');
-  await prisma.bookmark.upsert({
+  await db.bookmark.upsert({
     where: { userId_postId: { userId, postId } },
     create: { userId, postId },
     update: {},
@@ -337,11 +337,11 @@ export async function bookmarkPost(postId: string, userId: string) {
 }
 
 export async function unbookmarkPost(postId: string, userId: string) {
-  await prisma.bookmark.deleteMany({ where: { userId, postId } });
+  await db.bookmark.deleteMany({ where: { userId, postId } });
 }
 
 export async function listBookmarks(userId: string, cursor?: string, limit = 20) {
-  const items = await prisma.bookmark.findMany({
+  const items = await db.bookmark.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -358,7 +358,7 @@ export async function listBookmarks(userId: string, cursor?: string, limit = 20)
 
 // Returns the up-to-date engagement counts for a post (used by toggle endpoints).
 export async function getCounts(postId: string) {
-  const post = await prisma.post.findUnique({
+  const post = await db.post.findUnique({
     where: { id: postId },
     select: { viewCount: true, _count: { select: { likes: true, reposts: true, replies: true, quotes: true } } },
   });
@@ -380,7 +380,7 @@ export async function getCounts(postId: string) {
 // Detailed engagement analytics for a post. Author-only: surfaces reach and
 // interaction breakdowns plus a simple engagement rate.
 export async function getPostAnalytics(postId: string, userId: string) {
-  const post = await prisma.post.findUnique({
+  const post = await db.post.findUnique({
     where: { id: postId },
     select: {
       authorId: true,
@@ -415,12 +415,12 @@ export async function getPostAnalytics(postId: string, userId: string) {
 }
 
 export async function pinPost(postId: string, userId: string) {
-  const post = await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } });
+  const post = await db.post.findUnique({ where: { id: postId }, select: { authorId: true } });
   if (!post) throw ApiError.notFound('Post not found');
   if (post.authorId !== userId) throw ApiError.forbidden('You can only pin your own posts');
-  await prisma.user.update({ where: { id: userId }, data: { pinnedPostId: postId } });
+  await db.user.update({ where: { id: userId }, data: { pinnedPostId: postId } });
 }
 
 export async function unpinPost(userId: string) {
-  await prisma.user.update({ where: { id: userId }, data: { pinnedPostId: null } });
+  await db.user.update({ where: { id: userId }, data: { pinnedPostId: null } });
 }

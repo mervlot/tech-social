@@ -1,7 +1,7 @@
 import { Server } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { env } from '../config/env';
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { verifyAccessToken } from '../utils/jwt';
 import { setIO, userRoom } from './io';
 import { markConversationRead } from '../services/message.service';
@@ -68,7 +68,7 @@ export function initSockets(httpServer: HttpServer): Server {
     // Join / leave a community chat room for live group messages.
     socket.on('community:join', async ({ communityId }: { communityId: string }) => {
       if (typeof communityId !== 'string') return;
-      const membership = await prisma.communityMember
+      const membership = await db.communityMember
         .findUnique({
           where: { communityId_userId: { communityId, userId } },
           select: { userId: true },
@@ -115,7 +115,7 @@ export function initSockets(httpServer: HttpServer): Server {
       const [userAId, userBId] = userId < toUserId ? [userId, toUserId] : [toUserId, userId];
       // Block check (either direction) — never connect blocked users.
       const [blocked, conversation, caller] = await Promise.all([
-        prisma.block.findFirst({
+        db.block.findFirst({
           where: {
             OR: [
               { blockerId: userId, blockedId: toUserId },
@@ -123,11 +123,11 @@ export function initSockets(httpServer: HttpServer): Server {
             ],
           },
         }),
-        prisma.conversation.findUnique({
+        db.conversation.findUnique({
           where: { userAId_userBId: { userAId, userBId } },
           select: { id: true },
         }),
-        prisma.user.findUnique({
+        db.user.findUnique({
           where: { id: userId },
           select: { id: true, username: true, displayName: true, avatarUrl: true, verified: true },
         }),
@@ -185,7 +185,7 @@ export function initSockets(httpServer: HttpServer): Server {
       // broadcast that they went offline.
       if (removeConnection(userId)) {
         const lastSeenAt = new Date();
-        await prisma.user.update({ where: { id: userId }, data: { lastSeenAt } }).catch(() => {});
+        await db.user.update({ where: { id: userId }, data: { lastSeenAt } }).catch(() => {});
         io.emit('presence:update', { userId, online: false, lastSeenAt });
       }
     });

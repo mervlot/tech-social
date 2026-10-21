@@ -71,7 +71,7 @@ This builds the client for desktop (same-origin) and compiles the server. The
 offline app then:
 
 - stores its SQLite database and JWT secrets under the user's app-data dir
-  (seeded from `server/prisma/template.db` on first launch),
+  (seeded from `server/sqlite/template.db` on first launch),
 - runs the backend with `NODE_ENV=production DESKTOP=1` so cookies stay
   `SameSite=Lax`/non-secure for `http://localhost` and uploads are persisted in
   the database.

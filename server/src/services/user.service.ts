@@ -1,11 +1,11 @@
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { authorSelect } from './serializers';
 import { createNotification, removeNotification } from './notification.service';
 
 // Public profile shape including follow counts and the viewer's relationship.
 export async function getProfile(username: string, viewerId?: string) {
-  const user = await prisma.user.findUnique({
+  const user = await db.user.findUnique({
     where: { username },
     select: {
       id: true,
@@ -29,10 +29,10 @@ export async function getProfile(username: string, viewerId?: string) {
   let relationship = { isFollowing: false, isFollowedBy: false, isBlocked: false, isMuted: false, isSelf: false };
   if (viewerId) {
     const [following, followedBy, blocked, muted] = await Promise.all([
-      prisma.follow.findUnique({ where: { followerId_followingId: { followerId: viewerId, followingId: user.id } } }),
-      prisma.follow.findUnique({ where: { followerId_followingId: { followerId: user.id, followingId: viewerId } } }),
-      prisma.block.findUnique({ where: { blockerId_blockedId: { blockerId: viewerId, blockedId: user.id } } }),
-      prisma.mute.findUnique({ where: { muterId_mutedId: { muterId: viewerId, mutedId: user.id } } }),
+      db.follow.findUnique({ where: { followerId_followingId: { followerId: viewerId, followingId: user.id } } }),
+      db.follow.findUnique({ where: { followerId_followingId: { followerId: user.id, followingId: viewerId } } }),
+      db.block.findUnique({ where: { blockerId_blockedId: { blockerId: viewerId, blockedId: user.id } } }),
+      db.mute.findUnique({ where: { muterId_mutedId: { muterId: viewerId, mutedId: user.id } } }),
     ]);
     relationship = {
       isFollowing: !!following,
@@ -60,7 +60,7 @@ interface UpdateProfileArgs {
 }
 
 export async function updateProfile(userId: string, data: UpdateProfileArgs) {
-  const user = await prisma.user.update({
+  const user = await db.user.update({
     where: { id: userId },
     data,
     select: {
@@ -83,11 +83,11 @@ export async function updateProfile(userId: string, data: UpdateProfileArgs) {
 // ─────────────────────── Follow graph ───────────────────────
 
 export async function followUser(followerId: string, username: string) {
-  const target = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const target = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!target) throw ApiError.notFound('User not found');
   if (target.id === followerId) throw ApiError.badRequest('You cannot follow yourself');
 
-  const blocked = await prisma.block.findFirst({
+  const blocked = await db.block.findFirst({
     where: {
       OR: [
         { blockerId: target.id, blockedId: followerId },
@@ -97,7 +97,7 @@ export async function followUser(followerId: string, username: string) {
   });
   if (blocked) throw ApiError.forbidden('Cannot follow a blocked user');
 
-  await prisma.follow.upsert({
+  await db.follow.upsert({
     where: { followerId_followingId: { followerId, followingId: target.id } },
     create: { followerId, followingId: target.id },
     update: {},
@@ -107,15 +107,15 @@ export async function followUser(followerId: string, username: string) {
 }
 
 export async function unfollowUser(followerId: string, username: string) {
-  const target = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const target = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!target) throw ApiError.notFound('User not found');
-  await prisma.follow.deleteMany({ where: { followerId, followingId: target.id } });
+  await db.follow.deleteMany({ where: { followerId, followingId: target.id } });
   await removeNotification({ type: 'FOLLOW', recipientId: target.id, actorId: followerId });
   return getFollowCounts(target.id);
 }
 
 async function getFollowCounts(userId: string) {
-  const counts = await prisma.user.findUnique({
+  const counts = await db.user.findUnique({
     where: { id: userId },
     select: { _count: { select: { followers: true, following: true } } },
   });
@@ -128,7 +128,7 @@ async function listRelationUsers(
 ) {
   const ids = rows.map((r) => r.otherId);
   if (!ids.length) return [];
-  const users = await prisma.user.findMany({
+  const users = await db.user.findMany({
     where: { id: { in: ids } },
     select: { ...authorSelect },
   });
@@ -137,7 +137,7 @@ async function listRelationUsers(
   const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as typeof users;
 
   if (!viewerId) return ordered.map((u) => ({ ...u, isFollowing: false }));
-  const following = await prisma.follow.findMany({
+  const following = await db.follow.findMany({
     where: { followerId: viewerId, followingId: { in: ids } },
     select: { followingId: true },
   });
@@ -146,9 +146,9 @@ async function listRelationUsers(
 }
 
 export async function listFollowers(username: string, viewerId?: string, cursor?: string, limit = 20) {
-  const user = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const user = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!user) throw ApiError.notFound('User not found');
-  const rows = await prisma.follow.findMany({
+  const rows = await db.follow.findMany({
     where: { followingId: user.id },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -161,9 +161,9 @@ export async function listFollowers(username: string, viewerId?: string, cursor?
 }
 
 export async function listFollowing(username: string, viewerId?: string, cursor?: string, limit = 20) {
-  const user = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const user = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!user) throw ApiError.notFound('User not found');
-  const rows = await prisma.follow.findMany({
+  const rows = await db.follow.findMany({
     where: { followerId: user.id },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
@@ -178,18 +178,18 @@ export async function listFollowing(username: string, viewerId?: string, cursor?
 // ─────────────────────── Block / mute ───────────────────────
 
 export async function blockUser(blockerId: string, username: string) {
-  const target = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const target = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!target) throw ApiError.notFound('User not found');
   if (target.id === blockerId) throw ApiError.badRequest('You cannot block yourself');
 
-  await prisma.$transaction([
-    prisma.block.upsert({
+  await db.$transaction([
+    db.block.upsert({
       where: { blockerId_blockedId: { blockerId, blockedId: target.id } },
       create: { blockerId, blockedId: target.id },
       update: {},
     }),
     // Blocking removes any mutual follow relationship.
-    prisma.follow.deleteMany({
+    db.follow.deleteMany({
       where: {
         OR: [
           { followerId: blockerId, followingId: target.id },
@@ -201,16 +201,16 @@ export async function blockUser(blockerId: string, username: string) {
 }
 
 export async function unblockUser(blockerId: string, username: string) {
-  const target = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const target = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!target) throw ApiError.notFound('User not found');
-  await prisma.block.deleteMany({ where: { blockerId, blockedId: target.id } });
+  await db.block.deleteMany({ where: { blockerId, blockedId: target.id } });
 }
 
 export async function muteUser(muterId: string, username: string) {
-  const target = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const target = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!target) throw ApiError.notFound('User not found');
   if (target.id === muterId) throw ApiError.badRequest('You cannot mute yourself');
-  await prisma.mute.upsert({
+  await db.mute.upsert({
     where: { muterId_mutedId: { muterId, mutedId: target.id } },
     create: { muterId, mutedId: target.id },
     update: {},
@@ -218,21 +218,21 @@ export async function muteUser(muterId: string, username: string) {
 }
 
 export async function unmuteUser(muterId: string, username: string) {
-  const target = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+  const target = await db.user.findUnique({ where: { username }, select: { id: true } });
   if (!target) throw ApiError.notFound('User not found');
-  await prisma.mute.deleteMany({ where: { muterId, mutedId: target.id } });
+  await db.mute.deleteMany({ where: { muterId, mutedId: target.id } });
 }
 
 // "Who to follow": users the viewer doesn't already follow, isn't, and hasn't
 // blocked/muted — ordered by popularity (follower count).
 export async function getSuggestions(viewerId: string, limit = 3) {
   const [following, hidden] = await Promise.all([
-    prisma.follow.findMany({ where: { followerId: viewerId }, select: { followingId: true } }),
+    db.follow.findMany({ where: { followerId: viewerId }, select: { followingId: true } }),
     getHiddenUserIds(viewerId),
   ]);
   const exclude = [viewerId, ...following.map((f) => f.followingId), ...hidden];
 
-  const users = await prisma.user.findMany({
+  const users = await db.user.findMany({
     where: { id: { notIn: exclude } },
     select: { ...authorSelect },
     orderBy: { followers: { _count: 'desc' } },
@@ -245,9 +245,9 @@ export async function getSuggestions(viewerId: string, limit = 3) {
 // (people they block, people who block them, and muted users).
 export async function getHiddenUserIds(viewerId: string): Promise<string[]> {
   const [blocking, blockedBy, muting] = await Promise.all([
-    prisma.block.findMany({ where: { blockerId: viewerId }, select: { blockedId: true } }),
-    prisma.block.findMany({ where: { blockedId: viewerId }, select: { blockerId: true } }),
-    prisma.mute.findMany({ where: { muterId: viewerId }, select: { mutedId: true } }),
+    db.block.findMany({ where: { blockerId: viewerId }, select: { blockedId: true } }),
+    db.block.findMany({ where: { blockedId: viewerId }, select: { blockerId: true } }),
+    db.mute.findMany({ where: { muterId: viewerId }, select: { mutedId: true } }),
   ]);
   return [
     ...new Set([

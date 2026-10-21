@@ -1,4 +1,4 @@
-import { prisma } from '../config/prisma';
+import { db } from '../config/db';
 import { ApiError } from '../utils/apiError';
 import { authorSelect } from './serializers';
 import { emitToUser } from '../sockets/io';
@@ -24,7 +24,7 @@ export async function createStory(
   mediaType: 'IMAGE' | 'VIDEO',
   caption?: string,
 ) {
-  const story = await prisma.story.create({
+  const story = await db.story.create({
     data: {
       authorId,
       mediaUrl,
@@ -36,7 +36,7 @@ export async function createStory(
   });
 
   // Nudge followers (and the author's other tabs) to refresh their story bars.
-  const followers = await prisma.follow.findMany({
+  const followers = await db.follow.findMany({
     where: { followingId: authorId },
     select: { followerId: true },
   });
@@ -50,13 +50,13 @@ export async function createStory(
 // grouped per author. The viewer's own group always comes first; the rest are
 // ordered unseen-first, then by most recent story.
 export async function getStoriesFeed(userId: string) {
-  const following = await prisma.follow.findMany({
+  const following = await db.follow.findMany({
     where: { followerId: userId },
     select: { followingId: true },
   });
   const authorIds = [userId, ...following.map((f) => f.followingId)];
 
-  const stories = await prisma.story.findMany({
+  const stories = await db.story.findMany({
     where: { authorId: { in: authorIds }, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'asc' },
     include: {
@@ -91,10 +91,10 @@ export async function getStoriesFeed(userId: string) {
 }
 
 async function getVisibleStory(storyId: string, userId: string) {
-  const story = await prisma.story.findUnique({ where: { id: storyId } });
+  const story = await db.story.findUnique({ where: { id: storyId } });
   if (!story || story.expiresAt <= new Date()) throw ApiError.notFound('Story not found');
   if (story.authorId !== userId) {
-    const blocked = await prisma.block.findFirst({
+    const blocked = await db.block.findFirst({
       where: {
         OR: [
           { blockerId: story.authorId, blockedId: userId },
@@ -112,23 +112,23 @@ async function getVisibleStory(storyId: string, userId: string) {
 export async function markStoryViewed(storyId: string, userId: string) {
   const story = await getVisibleStory(storyId, userId);
   if (story.authorId === userId) return;
-  const existing = await prisma.storyView.findUnique({
+  const existing = await db.storyView.findUnique({
     where: { storyId_userId: { storyId, userId } },
   });
   if (existing) return;
   // A concurrent duplicate insert can still race past the check; swallow it
   // so repeat views never error and never double-notify.
-  await prisma.storyView.create({ data: { storyId, userId } }).catch(() => null);
+  await db.storyView.create({ data: { storyId, userId } }).catch(() => null);
   // Let the author's open viewer update its live view counter.
   emitToUser(story.authorId, 'story:viewed', { storyId });
 }
 
 // Who has seen a story — available to its author only.
 export async function getStoryViewers(storyId: string, userId: string) {
-  const story = await prisma.story.findUnique({ where: { id: storyId } });
+  const story = await db.story.findUnique({ where: { id: storyId } });
   if (!story) throw ApiError.notFound('Story not found');
   if (story.authorId !== userId) throw ApiError.forbidden('Only the author can see story viewers');
-  const views = await prisma.storyView.findMany({
+  const views = await db.storyView.findMany({
     where: { storyId },
     orderBy: { viewedAt: 'desc' },
     include: { user: { select: authorSelect } },
@@ -137,8 +137,8 @@ export async function getStoryViewers(storyId: string, userId: string) {
 }
 
 export async function deleteStory(storyId: string, userId: string) {
-  const story = await prisma.story.findUnique({ where: { id: storyId } });
+  const story = await db.story.findUnique({ where: { id: storyId } });
   if (!story) throw ApiError.notFound('Story not found');
   if (story.authorId !== userId) throw ApiError.forbidden('You can only delete your own stories');
-  await prisma.story.delete({ where: { id: storyId } });
+  await db.story.delete({ where: { id: storyId } });
 }

@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 
 // Public shape of a user embedded in other resources (post author, etc).
 export const authorSelect = {
@@ -10,12 +9,12 @@ export const authorSelect = {
   verified: true,
   lastSeenAt: true,
   gameStatus: true,
-} satisfies Prisma.UserSelect;
+} satisfies Record<string, unknown>;
 
-// Builds the Prisma `include` used when fetching posts. When a viewer id is
+// Builds the SQLite `include` used when fetching posts. When a viewer id is
 // supplied we also fetch viewer-specific flags (liked / bookmarked / reposted).
-function baseInclude(viewerId?: string): Prisma.PostInclude {
-  const include: Prisma.PostInclude = {
+function baseInclude(viewerId?: string): Record<string, unknown> {
+  const include: Record<string, unknown> = {
     author: { select: authorSelect },
     media: true,
     hashtags: { include: { hashtag: true } },
@@ -58,7 +57,7 @@ export function serializePoll(poll: AnyPost | null | undefined) {
 }
 
 // One level of nesting so reposts/quotes carry the embedded original post.
-export function postInclude(viewerId?: string): Prisma.PostInclude {
+export function postInclude(viewerId?: string): Record<string, unknown> {
   const base = baseInclude(viewerId);
   return {
     ...base,

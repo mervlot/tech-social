@@ -1,5 +1,4 @@
 import { NextFunction, Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 import { ApiError } from '../utils/apiError';
 
@@ -25,14 +24,15 @@ export function errorHandler(
     });
   }
 
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === 'P2002') {
-      const target = (err.meta?.target as string[] | undefined)?.join(', ');
+  if (err instanceof Error) {
+    const databaseError = err as Error & { code?: string; meta?: { target?: string[] } };
+    if (databaseError.code === 'P2002') {
+      const target = databaseError.meta?.target?.join(', ');
       return res
         .status(409)
         .json({ error: { message: `Already exists${target ? `: ${target}` : ''}` } });
     }
-    if (err.code === 'P2025') {
+    if (databaseError.code === 'P2025') {
       return res.status(404).json({ error: { message: 'Resource not found' } });
     }
   }
