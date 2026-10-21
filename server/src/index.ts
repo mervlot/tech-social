@@ -20,7 +20,7 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log('\nShutting down...');
     server.close();
-    await db.$disconnect();
+    db.close();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
