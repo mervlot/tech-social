@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, user_a_id TEXT NO
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sender_id TEXT NOT NULL, content TEXT, image_url TEXT, audio_url TEXT, video_note_url TEXT, media_duration_ms INTEGER, reply_to_id TEXT, edited_at TEXT, deleted_at TEXT, read_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS message_reactions (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(message_id, user_id, emoji));
 CREATE TABLE IF NOT EXISTS community_message_reactions (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS stored_uploads (id TEXT PRIMARY KEY, data BLOB NOT NULL, mime_type TEXT NOT NULL, original_name TEXT NOT NULL, size INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS posts_author_idx ON posts(author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS likes_post_idx ON likes(post_id);
@@ -69,10 +70,17 @@ const tableNames: Record<string, string> = {
   story: 'stories', storyView: 'story_views', hashtag: 'hashtags', postHashtag: 'post_hashtags', mention: 'mentions',
   poll: 'polls', pollVote: 'poll_votes', notification: 'notifications', community: 'communities',
   communityMember: 'community_members', communityMessage: 'community_messages', conversation: 'conversations',
-  message: 'messages', messageReaction: 'message_reactions', communityMessageReaction: 'community_message_reactions',
+  message: 'messages', messageReaction: 'message_reactions', communityMessageReaction: 'community_message_reactions', storedUpload: 'stored_uploads',
 };
 const column = (key: string) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-const value = (input: any) => input instanceof Date ? input.toISOString() : typeof input === 'boolean' ? (input ? 1 : 0) : input;
+const value = (input: any) => {
+  if (input instanceof Date) return input.toISOString();
+  if (typeof input === 'boolean') return input ? 1 : 0;
+  if (input === undefined) return null;
+  if (Buffer.isBuffer(input) || ArrayBuffer.isView(input)) return input;
+  if (input && typeof input === 'object') return JSON.stringify(input);
+  return input;
+};
 const jsonColumns = new Set(['media', 'mediaJson', 'poll', 'options']);
 const fromRow = (row: Row | undefined): Row | null => {
   if (!row) return null;
@@ -135,12 +143,31 @@ function model(name: string): any {
         if (row.media && typeof row.media === 'object') row.media = JSON.stringify(row.media.create?.map((item: any) => item) ?? row.media);
         if (row.poll && typeof row.poll === 'object') row.poll = JSON.stringify(row.poll.create ?? row.poll);
       }
-      const keys = Object.keys(row).filter((key) => row[key] === null || typeof row[key] !== 'object' || row[key] instanceof Date);
+      const keys = Object.keys(row).filter((key) => {
+        const item = row[key];
+        return item !== undefined && (item === null || typeof item !== 'object' || item instanceof Date || Buffer.isBuffer(item) || ArrayBuffer.isView(item));
+      });
       const columns = keys.map(column);
       sqlite.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...keys.map((key) => value(row[key])));
       return fromRow(sqlite.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(row.id) as Row);
     },
-    update: async ({ where, data }: any) => { const current = find({ where })[0]; if (!current) throw new Error(`${name} not found`); const entries = Object.entries(data).filter(([, v]) => typeof v !== 'object' || v instanceof Date); sqlite.prepare(`UPDATE ${table} SET ${entries.map(([key]) => `${column(key)} = ?`).join(',')} WHERE id = ?`).run(...entries.map(([, v]) => value(v)), current.id); return find({ where: { id: current.id } })[0]; },
+    update: async ({ where, data }: any) => {
+      const current = find({ where })[0];
+      if (!current) throw new Error(`${name} not found`);
+      const entries = Object.entries(data).filter(([, raw]) => raw !== undefined).map(([key, raw]) => {
+        if (raw && typeof raw === 'object' && 'increment' in raw) {
+          return [key, Number(current[key] ?? 0) + Number(raw.increment)] as const;
+        }
+        if (raw && typeof raw === 'object' && 'decrement' in raw) {
+          return [key, Number(current[key] ?? 0) - Number(raw.decrement)] as const;
+        }
+        return [key, raw] as const;
+      });
+      if (entries.length) {
+        sqlite.prepare(`UPDATE ${table} SET ${entries.map(([key]) => `${column(key)} = ?`).join(',')} WHERE id = ?`).run(...entries.map(([, raw]) => value(raw)), current.id);
+      }
+      return find({ where: { id: current.id } })[0];
+    },
     updateMany: async ({ where, data }: any) => { const rows = find({ where }); for (const row of rows) await model(name).update({ where: { id: row.id }, data }); return { count: rows.length }; },
     deleteMany: async ({ where }: any = {}) => { const rows = find({ where }); for (const row of rows) sqlite.prepare(`DELETE FROM ${table} WHERE id = ?`).run(row.id); return { count: rows.length }; },
     delete: async ({ where }: any) => { const row = find({ where })[0]; if (row) sqlite.prepare(`DELETE FROM ${table} WHERE id = ?`).run(row.id); return row; },
